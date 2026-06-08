@@ -1,2 +1,2 @@
 # Vibo Coding 创建小游戏。
-[👉 进入 Tetris 文件夹](./Tetris/)
+俄罗斯方块 [👉 进入 Tetris 文件夹](./Tetris/)
