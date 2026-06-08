@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>俄罗斯方块</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    color: #eee;
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  #game-wrapper {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+  }
+  #game-board {
+    border: 3px solid #e94560;
+    border-radius: 4px;
+    background: #0f0f23;
+    box-shadow: 0 0 30px rgba(233, 69, 96, 0.3);
+  }
+  #side-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 140px;
+  }
+  .panel-box {
+    background: #0f0f23;
+    border: 2px solid #e94560;
+    border-radius: 4px;
+    padding: 12px;
+    text-align: center;
+  }
+  .panel-box h3 {
+    font-size: 12px;
+    color: #e94560;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+  }
+  #next-canvas {
+    display: block;
+    margin: 0 auto;
+  }
+  .stat-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #00d4ff;
+  }
+  #controls {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #888;
+    line-height: 1.8;
+  }
+  #controls span {
+    color: #e94560;
+    font-weight: bold;
+  }
+  #overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+  }
+  #overlay.hidden { display: none; }
+  #overlay-content {
+    text-align: center;
+  }
+  #overlay-content h1 {
+    font-size: 48px;
+    color: #e94560;
+    margin-bottom: 12px;
+  }
+  #overlay-content p {
+    font-size: 18px;
+    color: #aaa;
+    margin-bottom: 20px;
+  }
+  #overlay-content .final-score {
+    font-size: 32px;
+    color: #00d4ff;
+    margin-bottom: 20px;
+  }
+  .btn {
+    background: #e94560;
+    color: #fff;
+    border: none;
+    padding: 12px 32px;
+    font-size: 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: background 0.2s;
+  }
+  .btn:hover { background: #ff6b81; }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <div id="overlay-content">
+    <h1 id="overlay-title">俄罗斯方块</h1>
+    <p id="overlay-msg">按「开始游戏」或 Enter 键开始</p>
+    <div class="final-score hidden" id="overlay-score"></div>
+    <button class="btn" id="start-btn">开始游戏</button>
+  </div>
+</div>
+
+<div id="game-wrapper">
+  <canvas id="game-board" width="300" height="600"></canvas>
+  <div id="side-panel">
+    <div class="panel-box">
+      <h3>下一个</h3>
+      <canvas id="next-canvas" width="100" height="100"></canvas>
+    </div>
+    <div class="panel-box">
+      <h3>得分</h3>
+      <div class="stat-value" id="score">0</div>
+    </div>
+    <div class="panel-box">
+      <h3>等级</h3>
+      <div class="stat-value" id="level">1</div>
+    </div>
+    <div class="panel-box">
+      <h3>行数</h3>
+      <div class="stat-value" id="lines">0</div>
+    </div>
+    <div id="controls">
+      <span>← →</span> 移动<br>
+      <span>↑</span> 旋转<br>
+      <span>↓</span> 软降<br>
+      <span>Space</span> 硬降<br>
+      <span>P</span> 暂停<br>
+      <span>Enter</span> 开始/重开
+    </div>
+  </div>
+</div>
+
+<script>
+const COLS = 10;
+const ROWS = 20;
+const BLOCK = 30;
+const SHAPES = [
+  { shape: [[1,1,1,1]], color: '#00d4ff' },
+  { shape: [[1,1],[1,1]], color: '#ffe66d' },
+  { shape: [[0,1,0],[1,1,1]], color: '#a855f7' },
+  { shape: [[1,0],[1,0],[1,1]], color: '#3b82f6' },
+  { shape: [[0,1],[0,1],[1,1]], color: '#f97316' },
+  { shape: [[0,1,1],[1,1,0]], color: '#22c55e' },
+  { shape: [[1,1,0],[0,1,1]], color: '#ef4444' },
+];
+
+const canvas = document.getElementById('game-board');
+const ctx = canvas.getContext('2d');
+const nextCanvas = document.getElementById('next-canvas');
+const nextCtx = nextCanvas.getContext('2d');
+
+let board, currentPiece, nextPiece, score, lines, level;
+let dropInterval, dropCounter, lastTime;
+let gameOver, paused, running;
+let animFrame;
+
+function createBoard() {
+  return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+}
+
+function randomPiece() {
+  const t = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+  const shape = t.shape.map(r => [...r]);
+  return { shape, color: t.color, x: Math.floor((COLS - shape[0].length) / 2), y: 0 };
+}
+
+function rotate(shape) {
+  const rows = shape.length, cols = shape[0].length;
+  const result = Array.from({ length: cols }, () => Array(rows).fill(0));
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      result[c][rows - 1 - r] = shape[r][c];
+  return result;
+}
+
+function isValid(shape, offX, offY) {
+  for (let r = 0; r < shape.length; r++)
+    for (let c = 0; c < shape[r].length; c++)
+      if (shape[r][c]) {
+        const nx = offX + c, ny = offY + r;
+        if (nx < 0 || nx >= COLS || ny >= ROWS) return false;
+        if (ny >= 0 && board[ny][nx]) return false;
+      }
+  return true;
+}
+
+function merge() {
+  for (let r = 0; r < currentPiece.shape.length; r++)
+    for (let c = 0; c < currentPiece.shape[r].length; c++)
+      if (currentPiece.shape[r][c]) {
+        const y = currentPiece.y + r;
+        if (y < 0) { endGame(); return; }
+        board[y][currentPiece.x + c] = currentPiece.color;
+      }
+}
+
+function clearLines() {
+  let cleared = 0;
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (board[r].every(c => c !== null)) {
+      board.splice(r, 1);
+      board.unshift(Array(COLS).fill(null));
+      cleared++;
+      r++;
+    }
+  }
+  if (cleared) {
+    score += cleared * 10;
+    lines += cleared;
+    level = Math.floor(lines / 10) + 1;
+    dropInterval = Math.max(50, 1000 - (level - 1) * 80);
+    updateStats();
+  }
+}
+
+function ghostY() {
+  let gy = currentPiece.y;
+  while (isValid(currentPiece.shape, currentPiece.x, gy + 1)) gy++;
+  return gy;
+}
+
+function drawBlock(context, x, y, color, alpha) {
+  context.globalAlpha = alpha || 1;
+  context.fillStyle = color;
+  context.fillRect(x * BLOCK, y * BLOCK, BLOCK, BLOCK);
+  context.strokeStyle = 'rgba(0,0,0,0.3)';
+  context.lineWidth = 1;
+  context.strokeRect(x * BLOCK, y * BLOCK, BLOCK, BLOCK);
+  context.globalAlpha = 1;
+}
+
+function draw() {
+  ctx.fillStyle = '#0f0f23';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 1;
+  for (let r = 0; r <= ROWS; r++) {
+    ctx.beginPath(); ctx.moveTo(0, r * BLOCK); ctx.lineTo(canvas.width, r * BLOCK); ctx.stroke();
+  }
+  for (let c = 0; c <= COLS; c++) {
+    ctx.beginPath(); ctx.moveTo(c * BLOCK, 0); ctx.lineTo(c * BLOCK, canvas.height); ctx.stroke();
+  }
+
+  // board
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (board[r][c]) drawBlock(ctx, c, r, board[r][c]);
+
+  if (currentPiece) {
+    // ghost
+    const gy = ghostY();
+    for (let r = 0; r < currentPiece.shape.length; r++)
+      for (let c = 0; c < currentPiece.shape[r].length; c++)
+        if (currentPiece.shape[r][c])
+          drawBlock(ctx, currentPiece.x + c, gy + r, currentPiece.color, 0.2);
+    // current
+    for (let r = 0; r < currentPiece.shape.length; r++)
+      for (let c = 0; c < currentPiece.shape[r].length; c++)
+        if (currentPiece.shape[r][c])
+          drawBlock(ctx, currentPiece.x + c, currentPiece.y + r, currentPiece.color);
+  }
+
+  if (paused) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#e94560';
+    ctx.font = 'bold 36px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('已暂停', canvas.width / 2, canvas.height / 2);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '16px "Microsoft YaHei", sans-serif';
+    ctx.fillText('按 P 继续', canvas.width / 2, canvas.height / 2 + 40);
+  }
+}
+
+function drawNext() {
+  nextCtx.fillStyle = '#0f0f23';
+  nextCtx.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+  if (!nextPiece) return;
+  const shape = nextPiece.shape;
+  const bw = 22;
+  const ox = (nextCanvas.width - shape[0].length * bw) / 2;
+  const oy = (nextCanvas.height - shape.length * bw) / 2;
+  for (let r = 0; r < shape.length; r++)
+    for (let c = 0; c < shape[r].length; c++)
+      if (shape[r][c]) {
+        nextCtx.fillStyle = nextPiece.color;
+        nextCtx.fillRect(ox + c * bw, oy + r * bw, bw, bw);
+        nextCtx.strokeStyle = 'rgba(0,0,0,0.3)';
+        nextCtx.lineWidth = 1;
+        nextCtx.strokeRect(ox + c * bw, oy + r * bw, bw, bw);
+      }
+}
+
+function updateStats() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('level').textContent = level;
+  document.getElementById('lines').textContent = lines;
+}
+
+function spawn() {
+  currentPiece = nextPiece || randomPiece();
+  nextPiece = randomPiece();
+  drawNext();
+  if (!isValid(currentPiece.shape, currentPiece.x, currentPiece.y)) {
+    endGame();
+  }
+}
+
+function endGame() {
+  gameOver = true;
+  running = false;
+  showOverlay('游戏结束', `最终得分：${score}`, '再来一局');
+}
+
+function showOverlay(title, msg, btnText) {
+  document.getElementById('overlay-title').textContent = title;
+  document.getElementById('overlay-msg').textContent = msg;
+  document.getElementById('start-btn').textContent = btnText || '开始游戏';
+  document.getElementById('overlay').classList.remove('hidden');
+}
+
+function hideOverlay() {
+  document.getElementById('overlay').classList.add('hidden');
+}
+
+function startGame() {
+  board = createBoard();
+  score = 0; lines = 0; level = 1;
+  dropInterval = 1000;
+  dropCounter = 0;
+  lastTime = 0;
+  gameOver = false;
+  paused = false;
+  running = true;
+  currentPiece = null;
+  nextPiece = null;
+  spawn();
+  updateStats();
+  hideOverlay();
+  if (animFrame) cancelAnimationFrame(animFrame);
+  animFrame = requestAnimationFrame(gameLoop);
+}
+
+function gameLoop(time) {
+  if (!running) return;
+  const dt = time - lastTime;
+  lastTime = time;
+  if (!paused) {
+    dropCounter += dt;
+    if (dropCounter >= dropInterval) {
+      dropCounter = 0;
+      if (isValid(currentPiece.shape, currentPiece.x, currentPiece.y + 1)) {
+        currentPiece.y++;
+      } else {
+        merge();
+        clearLines();
+        if (!gameOver) spawn();
+      }
+    }
+    draw();
+  }
+  animFrame = requestAnimationFrame(gameLoop);
+}
+
+function move(dx) {
+  if (isValid(currentPiece.shape, currentPiece.x + dx, currentPiece.y))
+    currentPiece.x += dx;
+}
+
+function rotatePiece() {
+  const rotated = rotate(currentPiece.shape);
+  // wall kick
+  const kicks = [0, -1, 1, -2, 2];
+  for (const kick of kicks) {
+    if (isValid(rotated, currentPiece.x + kick, currentPiece.y)) {
+      currentPiece.shape = rotated;
+      currentPiece.x += kick;
+      return;
+    }
+  }
+}
+
+function hardDrop() {
+  while (isValid(currentPiece.shape, currentPiece.x, currentPiece.y + 1))
+    currentPiece.y++;
+  merge();
+  clearLines();
+  if (!gameOver) spawn();
+  dropCounter = 0;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !running) { startGame(); return; }
+  if (!running || !currentPiece) return;
+  if (e.key === 'p' || e.key === 'P') {
+    paused = !paused;
+    if (paused) {
+      draw();
+    } else {
+      lastTime = performance.now();
+      animFrame = requestAnimationFrame(gameLoop);
+    }
+    return;
+  }
+  if (paused) return;
+  switch (e.key) {
+    case 'ArrowLeft': move(-1); e.preventDefault(); break;
+    case 'ArrowRight': move(1); e.preventDefault(); break;
+    case 'ArrowDown':
+      if (isValid(currentPiece.shape, currentPiece.x, currentPiece.y + 1)) {
+        currentPiece.y++;
+      }
+      dropCounter = 0;
+      e.preventDefault();
+      break;
+    case 'ArrowUp': rotatePiece(); e.preventDefault(); break;
+    case ' ': hardDrop(); e.preventDefault(); break;
+  }
+});
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+
+showOverlay('俄罗斯方块', '按「开始游戏」或 Enter 键开始', '开始游戏');
+</script>
+</body>
+</html>
