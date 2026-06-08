@@ -2,4 +2,4 @@
 
 单html文件，点击即可游玩。
 
-使用OpenCode+Mimo-V2.5创建。
+使用OpenCode+MiMo-V2.5创建。
